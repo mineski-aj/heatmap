@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLBB Player Heatmap</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&family=Share+Tech+Mono&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #050810;
+    color: #ccd6f6;
+    font-family: 'Rajdhani', sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+
+  h1 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: #00e5ff;
+    text-shadow: 0 0 20px rgba(0,229,255,0.5);
+    margin-bottom: 4px;
+  }
+
+  .subtitle {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.65rem;
+    color: #3a5070;
+    letter-spacing: 0.12em;
+    margin-bottom: 14px;
+  }
+
+  .wrapper {
+    position: relative;
+    width: 560px;
+    max-width: 96vw;
+  }
+
+  .map-container {
+    position: relative;
+    width: 560px;
+    height: 560px;
+    max-width: 96vw;
+    aspect-ratio: 1;
+    border: 1px solid #1a2240;
+    box-shadow: 0 0 40px rgba(0,229,255,0.07), inset 0 0 60px rgba(0,0,0,0.5);
+    overflow: hidden;
+    border-radius: 4px;
+  }
+
+  .map-base {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+  }
+
+  #heatCanvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    mix-blend-mode: screen;
+  }
+
+  #dotCanvas {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+  }
+
+  .scanlines {
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.06) 2px,rgba(0,0,0,0.06) 4px);
+    pointer-events: none;
+    z-index: 10;
+  }
+
+  .corner { position: absolute; width: 18px; height: 18px; border-color: #00e5ff; border-style: solid; opacity: 0.5; }
+  .corner.tl { top:6px; left:6px;   border-width: 2px 0 0 2px; }
+  .corner.tr { top:6px; right:6px;  border-width: 2px 2px 0 0; }
+  .corner.bl { bottom:6px; left:6px; border-width: 0 0 2px 2px; }
+  .corner.br { bottom:6px; right:6px; border-width: 0 2px 2px 0; }
+
+  #phaseLabel {
+    position: absolute; top: 9px; left: 50%;
+    transform: translateX(-50%);
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.6rem;
+    letter-spacing: 0.14em;
+    color: rgba(0,229,255,0.75);
+    z-index: 20;
+    background: rgba(5,8,16,0.75);
+    padding: 2px 10px;
+    border: 1px solid rgba(0,229,255,0.18);
+    border-radius: 2px;
+    white-space: nowrap;
+  }
+
+  .hud {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 9px;
+    padding: 7px 12px;
+    background: #0a0e1a;
+    border: 1px solid #1a2240;
+    border-radius: 3px;
+    width: 100%;
+  }
+
+  .timer {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 1.2rem;
+    color: #00e5ff;
+    text-shadow: 0 0 10px rgba(0,229,255,0.6);
+    min-width: 54px;
+  }
+
+  .progress-bar-outer {
+    flex: 1; height: 5px;
+    background: #111827; border-radius: 3px; overflow: hidden;
+    border: 1px solid #1a2240;
+  }
+  .progress-bar-inner {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, #0050ff, #00e5ff, #ff6b00);
+    border-radius: 3px;
+    box-shadow: 0 0 6px rgba(0,229,255,0.5);
+    transition: width 0.1s linear;
+  }
+
+  .phase-tag {
+    font-size: 0.68rem; font-weight: 700;
+    letter-spacing: 0.1em;
+    color: #ff6b00;
+    text-transform: uppercase;
+    min-width: 80px; text-align: right;
+  }
+
+  .legend {
+    display: flex; align-items: center; gap: 6px;
+    margin-top: 9px; width: 100%; justify-content: center;
+  }
+  .legend span {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.58rem;
+  }
+  .legend .lo { color: #0060ff; }
+  .legend .hi { color: #ff3300; }
+  .legend-bar {
+    flex: 1; max-width: 220px; height: 7px;
+    background: linear-gradient(90deg,
+      #000080 0%, #0000ff 12%, #00bfff 27%,
+      #00ff80 42%, #aaff00 55%,
+      #ffff00 66%, #ff8800 78%,
+      #ff2200 88%, #ffffff 100%
+    );
+    border-radius: 3px;
+    border: 1px solid #1a2240;
+  }
+
+  .api-note {
+    margin-top: 10px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.57rem;
+    color: #2a4060;
+    letter-spacing: 0.07em;
+    text-align: center;
+  }
+  .api-note span { color: #00e5ff77; }
+
+  /* ── CONTROL PANEL ── */
+  .ctrl-panel {
+    width: 560px; max-width: 96vw;
+    background: #0a0e1a;
+    border: 1px solid #1a2240;
+    border-radius: 3px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    display: flex; flex-direction: column; gap: 7px;
+  }
+  .ctrl-row {
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  }
+  .ctrl-label {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.58rem; color: #3a5070; letter-spacing: 0.1em; white-space: nowrap;
+  }
+  .ctrl-input {
+    background: #060a14; border: 1px solid #1a2a44; border-radius: 2px;
+    color: #ccd6f6; font-family: 'Share Tech Mono', monospace; font-size: 0.65rem;
+    padding: 3px 7px; outline: none;
+  }
+  .ctrl-input:focus { border-color: #00e5ff55; }
+  .ctrl-url  { flex: 1; min-width: 160px; }
+  .ctrl-time { width: 54px; }
+  .ctrl-num  { width: 46px; }
+  .ctrl-unit { font-family: 'Share Tech Mono', monospace; font-size: 0.58rem; color: #3a5070; }
+  .ctrl-select {
+    background: #060a14; border: 1px solid #1a2a44; border-radius: 2px;
+    color: #ccd6f6; font-family: 'Share Tech Mono', monospace; font-size: 0.65rem;
+    padding: 3px 5px; outline: none;
+  }
+  .ctrl-btn {
+    background: #0a2050; border: 1px solid #00e5ff44; border-radius: 2px;
+    color: #00e5ff; font-family: 'Share Tech Mono', monospace; font-size: 0.62rem;
+    letter-spacing: 0.1em; padding: 4px 12px; cursor: pointer; white-space: nowrap;
+  }
+  .ctrl-btn:hover:not(:disabled) { background: #0d3070; border-color: #00e5ff88; }
+  .ctrl-btn:disabled { opacity: 0.4; cursor: default; }
+  .ctrl-debug { border-top: 1px solid #0d1830; padding-top: 7px; }
+  .ctrl-debug-badge {
+    font-family: 'Share Tech Mono', monospace; font-size: 0.52rem;
+    color: #ff8800; border: 1px solid #ff880044; border-radius: 2px;
+    padding: 1px 5px; letter-spacing: 0.1em;
+  }
+  .ctrl-status {
+    font-family: 'Share Tech Mono', monospace; font-size: 0.58rem;
+    color: #2a4060; letter-spacing: 0.07em; margin-left: auto;
+  }
+</style>
+</head>
+<body>
+
+<h1>MLBB Player Heatmap</h1>
+<div class="subtitle">THERMAL MOVEMENT · LIVE API · CUSTOM TIME RANGE</div>
+
+<div class="ctrl-panel">
+  <div class="ctrl-row">
+    <span class="ctrl-label">API URL</span>
+    <input class="ctrl-input ctrl-url" id="apiUrl" value="http://localhost:3000/positions" spellcheck="false">
+    <button class="ctrl-btn" id="fetchBtn" onclick="fetchAndRender()">FETCH &amp; RENDER</button>
+  </div>
+  <div class="ctrl-row">
+    <span class="ctrl-label">FROM</span>
+    <input class="ctrl-input ctrl-time" id="fromTime" value="0:00" placeholder="mm:ss">
+    <span class="ctrl-label">TO</span>
+    <input class="ctrl-input ctrl-time" id="toTime" value="10:00" placeholder="mm:ss">
+    <span class="ctrl-label">PLAYBACK</span>
+    <input class="ctrl-input ctrl-num" id="playbackSec" type="number" value="15" min="1" max="300">
+    <span class="ctrl-unit">SEC</span>
+  </div>
+  <div class="ctrl-row ctrl-debug">
+    <span class="ctrl-debug-badge">DEBUG</span>
+    <span class="ctrl-label">CAMP</span>
+    <select class="ctrl-select" id="campSel">
+      <option value="">ALL</option>
+      <option value="1">1</option>
+      <option value="2">2</option>
+    </select>
+    <span class="ctrl-label">SEAT</span>
+    <select class="ctrl-select" id="seatSel">
+      <option value="">ALL</option>
+      <option value="1">1</option>
+      <option value="2">2</option>
+      <option value="3">3</option>
+      <option value="4">4</option>
+      <option value="5">5</option>
+    </select>
+    <span class="ctrl-status" id="dataStatus">NO DATA LOADED</span>
+  </div>
+</div>
+
+<div class="wrapper">
+  <div class="map-container">
+    <svg class="map-base" viewBox="0 0 560 560" xmlns="http://www.w3.org/2000/svg">
+      <rect width="560" height="560" fill="#06090f"/>
+      <path d="M0,560 L560,0" stroke="#0d1f35" stroke-width="44" fill="none" opacity="0.8"/>
+      <path d="M0,560 L560,0" stroke="#091628" stroke-width="40" fill="none"/>
+      <rect x="0" y="280" width="280" height="280" fill="#060d16" opacity="0.5"/>
+      <rect x="280" y="0" width="280" height="280" fill="#060d16" opacity="0.5"/>
+      <rect x="0"   y="0"   width="560" height="68" fill="#07111e" opacity="0.6"/>
+      <rect x="0"   y="0"   width="68"  height="560" fill="#07111e" opacity="0.6"/>
+      <rect x="0"   y="492" width="560" height="68" fill="#07111e" opacity="0.6"/>
+      <rect x="492" y="0"   width="68"  height="560" fill="#07111e" opacity="0.6"/>
+      <path d="M34,526 L526,34" stroke="#0a1828" stroke-width="50" fill="none"/>
+      <!-- Blue base -->
+      <circle cx="65" cy="495" r="36" fill="#051535" stroke="#0a2860" stroke-width="1.5"/>
+      <circle cx="65" cy="495" r="20" fill="#071a44" stroke="#103080" stroke-width="1"/>
+      <circle cx="65" cy="495" r="9"  fill="#0a2260" opacity="0.9"/>
+      <!-- Red base -->
+      <circle cx="495" cy="65" r="36" fill="#350505" stroke="#602020" stroke-width="1.5"/>
+      <circle cx="495" cy="65" r="20" fill="#440707" stroke="#803030" stroke-width="1"/>
+      <circle cx="495" cy="65" r="9"  fill="#601010" opacity="0.9"/>
+      <!-- Towers blue -->
+      <rect x="48"  y="192" width="11" height="11" rx="2" fill="#0d3060" stroke="#1a50a0" stroke-width="1"/>
+      <rect x="48"  y="318" width="11" height="11" rx="2" fill="#0d3060" stroke="#1a50a0" stroke-width="1"/>
+      <rect x="48"  y="428" width="11" height="11" rx="2" fill="#0d3060" stroke="#1a50a0" stroke-width="1"/>
+      <rect x="116" y="508" width="11" height="11" rx="2" fill="#0d3060" stroke="#1a50a0" stroke-width="1"/>
+      <rect x="228" y="508" width="11" height="11" rx="2" fill="#0d3060" stroke="#1a50a0" stroke-width="1"/>
+      <rect x="338" y="508" width="11" height="11" rx="2" fill="#0d3060" stroke="#1a50a0" stroke-width="1"/>
+      <!-- Towers red -->
+      <rect x="501" y="362" width="11" height="11" rx="2" fill="#600d0d" stroke="#a03030" stroke-width="1"/>
+      <rect x="501" y="228" width="11" height="11" rx="2" fill="#600d0d" stroke="#a03030" stroke-width="1"/>
+      <rect x="501" y="118" width="11" height="11" rx="2" fill="#600d0d" stroke="#a03030" stroke-width="1"/>
+      <rect x="430" y="42"  width="11" height="11" rx="2" fill="#600d0d" stroke="#a03030" stroke-width="1"/>
+      <rect x="320" y="42"  width="11" height="11" rx="2" fill="#600d0d" stroke="#a03030" stroke-width="1"/>
+      <rect x="210" y="42"  width="11" height="11" rx="2" fill="#600d0d" stroke="#a03030" stroke-width="1"/>
+      <!-- Lord pit -->
+      <ellipse cx="178" cy="148" rx="27" ry="21" fill="#0a1520" stroke="#1a3040" stroke-width="1"/>
+      <text x="178" y="152" text-anchor="middle" fill="#2a5070" font-size="8.5" font-family="Rajdhani">LORD</text>
+      <!-- Turtle pit -->
+      <ellipse cx="382" cy="412" rx="27" ry="21" fill="#0a1520" stroke="#1a3040" stroke-width="1"/>
+      <text x="382" y="416" text-anchor="middle" fill="#2a5070" font-size="8.5" font-family="Rajdhani">TURTLE</text>
+      <!-- Jungle camps -->
+      <circle cx="158" cy="308" r="9" fill="#081620" stroke="#102030" stroke-width="1"/>
+      <circle cx="198" cy="398" r="9" fill="#081620" stroke="#102030" stroke-width="1"/>
+      <circle cx="138" cy="420" r="7" fill="#081620" stroke="#102030" stroke-width="1"/>
+      <circle cx="402" cy="162" r="9" fill="#081620" stroke="#102030" stroke-width="1"/>
+      <circle cx="362" cy="148" r="7" fill="#081620" stroke="#102030" stroke-width="1"/>
+      <circle cx="422" cy="200" r="9" fill="#081620" stroke="#102030" stroke-width="1"/>
+    </svg>
+
+    <canvas id="heatCanvas" width="560" height="560"></canvas>
+    <canvas id="dotCanvas"  width="560" height="560"></canvas>
+
+    <div class="scanlines"></div>
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+    <div id="phaseLabel">EARLY GAME</div>
+  </div>
+
+  <div class="hud">
+    <div class="timer" id="timerDisplay">0:00</div>
+    <div class="progress-bar-outer">
+      <div class="progress-bar-inner" id="progressBar"></div>
+    </div>
+    <div class="phase-tag" id="phaseTag">EARLY GAME</div>
+  </div>
+
+  <div class="legend">
+    <span class="lo">LOW FREQ</span>
+    <div class="legend-bar"></div>
+    <span class="hi">HIGH FREQ</span>
+  </div>
+
+  <div class="api-note">
+    <span id="apiNote">FETCH positions from localhost:3000/positions to begin</span>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════
+//  CONSTANTS
+// ═══════════════════════════════════════════════════════════════════
+const CANVAS_SIZE    = 560;
+const HEAT_RADIUS    = 60;
+const HEAT_STRENGTH  = 0.32;
+const STAMP_DIST_PX  = 4;
+const MSCALE         = 215 / 47;  // game units → canvas px (~4.574)
+
+// ═══════════════════════════════════════════════════════════════════
+//  CANVAS SETUP  (HiDPI aware)
+// ═══════════════════════════════════════════════════════════════════
+const SCALE = window.devicePixelRatio || 1;
+
+function setupCanvas(id) {
+  const c = document.getElementById(id);
+  c.width  = CANVAS_SIZE * SCALE;
+  c.height = CANVAS_SIZE * SCALE;
+  c.style.width  = CANVAS_SIZE + 'px';
+  c.style.height = CANVAS_SIZE + 'px';
+  const ctx = c.getContext('2d');
+  ctx.scale(SCALE, SCALE);
+  return ctx;
+}
+
+const heatCtx = setupCanvas('heatCanvas');
+const dotCtx  = setupCanvas('dotCanvas');
+
+// ═══════════════════════════════════════════════════════════════════
+//  HEAT BUFFER
+// ═══════════════════════════════════════════════════════════════════
+const heatBuf = new Float32Array(CANVAS_SIZE * CANVAS_SIZE);
+let   bufMax  = 0.001;
+
+function stampHeat(cx, cy) {
+  const r = HEAT_RADIUS, r2 = r * r;
+  const x0 = Math.max(0, (cx - r) | 0), x1 = Math.min(CANVAS_SIZE - 1, (cx + r + 1) | 0);
+  const y0 = Math.max(0, (cy - r) | 0), y1 = Math.min(CANVAS_SIZE - 1, (cy + r + 1) | 0);
+  for (let py = y0; py <= y1; py++) {
+    const dy = py - cy;
+    for (let px = x0; px <= x1; px++) {
+      const d2 = (px - cx) * (px - cx) + dy * dy;
+      if (d2 >= r2) continue;
+      const norm = 1 - d2 / r2;
+      const i = py * CANVAS_SIZE + px;
+      heatBuf[i] += HEAT_STRENGTH * norm * norm;
+      if (heatBuf[i] > bufMax) bufMax = heatBuf[i];
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  COLORMAP  (infrared: black → blue → cyan → green → yellow → red → white)
+// ═══════════════════════════════════════════════════════════════════
+const COLOR_STOPS = [
+  [0.00,[0,0,0,0]],[0.07,[0,0,150,55]],[0.16,[0,0,255,105]],
+  [0.28,[0,200,255,155]],[0.42,[0,255,100,200]],[0.55,[120,255,0,220]],
+  [0.66,[255,255,0,235]],[0.77,[255,140,0,245]],[0.87,[255,30,0,252]],
+  [0.94,[255,0,60,255]],[1.00,[255,255,255,255]],
+];
+const CMAP = new Array(256);
+for (let i = 0; i < 256; i++) {
+  const t = i / 255;
+  for (let s = 1; s < COLOR_STOPS.length; s++) {
+    if (t <= COLOR_STOPS[s][0]) {
+      const [t0,c0] = COLOR_STOPS[s-1], [t1,c1] = COLOR_STOPS[s];
+      const f = (t-t0)/(t1-t0);
+      CMAP[i] = [(c0[0]+f*(c1[0]-c0[0]))|0,(c0[1]+f*(c1[1]-c0[1]))|0,
+                 (c0[2]+f*(c1[2]-c0[2]))|0,(c0[3]+f*(c1[3]-c0[3]))|0];
+      break;
+    }
+  }
+}
+
+// Offscreen canvas: putImageData ignores ctx transform, so we render heat
+// into a plain 560×560 canvas then drawImage it — drawImage respects scale(DPR).
+const heatOff    = document.createElement('canvas');
+heatOff.width    = CANVAS_SIZE;
+heatOff.height   = CANVAS_SIZE;
+const heatOffCtx = heatOff.getContext('2d');
+const imgData    = heatOffCtx.createImageData(CANVAS_SIZE, CANVAS_SIZE);
+const pixels     = imgData.data;
+
+function renderHeat() {
+  for (let i = 0; i < heatBuf.length; i++) {
+    const norm = heatBuf[i] / bufMax;
+    if (norm < 0.012) { pixels[i*4+3] = 0; continue; }
+    const c = CMAP[Math.min(255, (norm * 255) | 0)];
+    pixels[i*4]=c[0]; pixels[i*4+1]=c[1]; pixels[i*4+2]=c[2]; pixels[i*4+3]=c[3];
+  }
+  heatOffCtx.putImageData(imgData, 0, 0);
+  heatCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  heatCtx.drawImage(heatOff, 0, 0, CANVAS_SIZE, CANVAS_SIZE);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  COORDINATE TRANSFORM  (game coords → canvas coords)
+//  Blue base gx≈-47 → canvas (65,495)   Red base gx≈+47 → canvas (495,65)
+// ═══════════════════════════════════════════════════════════════════
+function gameToCanvas(gx, gy) {
+  return {
+    x: Math.max(4, Math.min(CANVAS_SIZE - 4, 280 + gx * MSCALE + gy * MSCALE)),
+    y: Math.max(4, Math.min(CANVAS_SIZE - 4, 280 - gx * MSCALE + gy * MSCALE)),
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PHASES
+// ═══════════════════════════════════════════════════════════════════
+const PHASES = [
+  { label: 'EARLY GAME',  start:   0, end: 180,  color: '#00e5ff' },
+  { label: 'MID GAME',    start: 180, end: 420,  color: '#ffcc00' },
+  { label: 'LATE GAME',   start: 420, end: 540,  color: '#ff6b00' },
+  { label: 'CLASH PHASE', start: 540, end: 99999, color: '#ff2020' },
+];
+function getPhase(s) {
+  return PHASES.find(p => s >= p.start && s < p.end) || PHASES[PHASES.length-1];
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  TIME HELPERS
+// ═══════════════════════════════════════════════════════════════════
+function parseMmSs(str) {
+  const parts = String(str).trim().split(':').map(Number);
+  return parts.length === 2 ? parts[0] * 60 + (parts[1] || 0) : (parseInt(str) || 0);
+}
+function fmt(s) {
+  return `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  ACTIVE TRACKS  — set by fetchAndRender()
+//  Each track: { camp, seat, waypoints:[{t,x,y}], lastStampX, lastStampY, _lastPos }
+// ═══════════════════════════════════════════════════════════════════
+let activeTracks  = [];
+let FROM_S        = 0;
+let TO_S          = 600;
+let PLAYBACK_SECS = 15;
+
+function interpolate(waypoints, gameT) {
+  if (!waypoints.length) return null;
+  if (gameT <= waypoints[0].t) return waypoints[0];
+  const last = waypoints[waypoints.length - 1];
+  if (gameT >= last.t) return last;
+  let lo = 0, hi = waypoints.length - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (waypoints[mid].t <= gameT) lo = mid; else hi = mid; }
+  const a = waypoints[lo], b = waypoints[hi];
+  const f = (gameT - a.t) / (b.t - a.t), ss = f * f * (3 - 2 * f);
+  return { x: a.x + (b.x - a.x) * ss, y: a.y + (b.y - a.y) * ss };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  FETCH & RENDER
+// ═══════════════════════════════════════════════════════════════════
+async function fetchAndRender() {
+  const urlBase = document.getElementById('apiUrl').value.trim();
+  const from    = parseMmSs(document.getElementById('fromTime').value);
+  const to      = parseMmSs(document.getElementById('toTime').value);
+  const pb      = Math.max(1, parseInt(document.getElementById('playbackSec').value) || 15);
+  const camp    = document.getElementById('campSel').value;
+  const seat    = document.getElementById('seatSel').value;
+
+  const params = new URLSearchParams({ from, to });
+  if (camp) params.set('camp', camp);
+  if (seat) params.set('seat', seat);
+
+  const btn    = document.getElementById('fetchBtn');
+  const status = document.getElementById('dataStatus');
+  btn.textContent = 'FETCHING…';
+  btn.disabled    = true;
+  status.textContent = 'LOADING…';
+  status.style.color = '#ffcc00';
+
+  try {
+    const res       = await fetch(`${urlBase}?${params}`);
+    const json      = await res.json();
+    const positions = json.positions || [];
+
+    if (!positions.length) {
+      status.textContent = 'NO DATA RETURNED';
+      status.style.color = '#ff4444';
+      btn.textContent = 'FETCH & RENDER'; btn.disabled = false;
+      return;
+    }
+
+    // Group positions by camp+seat into tracks
+    const trackMap = {};
+    for (const p of positions) {
+      const key = `${p.camp}-${p.seat}`;
+      if (!trackMap[key]) trackMap[key] = { camp: p.camp, seat: p.seat, waypoints: [] };
+      trackMap[key].waypoints.push({ t: p.game_time_s, x: p.x, y: p.y });
+    }
+    activeTracks = Object.values(trackMap).map(tr => ({
+      ...tr,
+      waypoints:  tr.waypoints.sort((a, b) => a.t - b.t),
+      lastStampX: -9999,
+      lastStampY: -9999,
+      _lastPos:   null,
+    }));
+
+    FROM_S        = from;
+    TO_S          = to;
+    PLAYBACK_SECS = pb;
+
+    const who = camp && seat ? `C${camp}·S${seat}` : camp ? `CAMP ${camp}` : 'ALL';
+    status.textContent = `${positions.length} PTS · ${who} · ${fmt(from)} → ${fmt(to)} · ${pb}s playback`;
+    status.style.color = '#00e5ff';
+    document.getElementById('apiNote').innerHTML =
+      `<span>${positions.length} points loaded</span> &nbsp;·&nbsp; ${who} &nbsp;·&nbsp; ${fmt(from)} → ${fmt(to)} &nbsp;·&nbsp; playback ${pb}s`;
+
+    btn.textContent = 'FETCH & RENDER'; btn.disabled = false;
+    resetLoop();
+
+  } catch (e) {
+    status.textContent = `ERROR: ${e.message}`;
+    status.style.color = '#ff4444';
+    btn.textContent = 'FETCH & RENDER'; btn.disabled = false;
+    console.error('[heatmap]', e);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  DOTS RENDERER  (one dot per active track, camp-colored)
+// ═══════════════════════════════════════════════════════════════════
+function drawDots(now) {
+  dotCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  for (const tr of activeTracks) {
+    if (!tr._lastPos) continue;
+    const { x, y } = tr._lastPos;
+    const blue  = tr.camp === 1;
+    const glow  = blue ? 'rgba(0,150,255,0.5)'   : 'rgba(255,80,0,0.5)';
+    const rim   = blue ? 'rgba(0,229,255,0.4)'   : 'rgba(255,140,0,0.4)';
+    const core  = blue ? '#00e5ff'               : '#ff8800';
+
+    const g = dotCtx.createRadialGradient(x, y, 0, x, y, 26);
+    g.addColorStop(0, glow); g.addColorStop(1, 'rgba(0,0,0,0)');
+    dotCtx.beginPath(); dotCtx.arc(x, y, 26, 0, Math.PI*2);
+    dotCtx.fillStyle = g; dotCtx.fill();
+
+    const pulse = 9 + Math.sin(now * 0.005) * 4;
+    dotCtx.beginPath(); dotCtx.arc(x, y, pulse, 0, Math.PI*2);
+    dotCtx.strokeStyle = rim; dotCtx.lineWidth = 1.5; dotCtx.stroke();
+
+    dotCtx.beginPath(); dotCtx.arc(x, y, 5, 0, Math.PI*2);
+    dotCtx.fillStyle = '#ffffff';
+    dotCtx.shadowColor = core; dotCtx.shadowBlur = 12;
+    dotCtx.fill(); dotCtx.shadowBlur = 0;
+
+    if (activeTracks.length > 1) {
+      dotCtx.fillStyle = blue ? '#66aaff' : '#ff8844';
+      dotCtx.font = 'bold 7px "Share Tech Mono",monospace';
+      dotCtx.textAlign = 'center';
+      dotCtx.fillText(`${tr.camp}·${tr.seat}`, x, y + 19);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  MAIN LOOP
+// ═══════════════════════════════════════════════════════════════════
+let startTime      = null;
+let heatDirty      = false;
+let lastHeatRender = 0;
+const HEAT_FPS     = 1000 / 30;
+
+const timerEl    = document.getElementById('timerDisplay');
+const progressEl = document.getElementById('progressBar');
+const phaseTagEl = document.getElementById('phaseTag');
+const phaseLblEl = document.getElementById('phaseLabel');
+
+function resetLoop() {
+  heatBuf.fill(0);
+  bufMax = 0.001;
+  pixels.fill(0);
+  heatOffCtx.putImageData(imgData, 0, 0);
+  heatCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  dotCtx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+  for (const tr of activeTracks) { tr.lastStampX = tr.lastStampY = -9999; tr._lastPos = null; }
+  heatDirty = false; lastHeatRender = 0; startTime = null;
+}
+
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (!activeTracks.length) return;
+
+  if (!startTime) startTime = now;
+  let elapsed = (now - startTime) / 1000;
+
+  if (elapsed >= PLAYBACK_SECS) {
+    resetLoop();
+    startTime = now;
+    elapsed = 0;
+  }
+
+  const gameSpeed = (TO_S - FROM_S) / PLAYBACK_SECS;
+  const gameT     = FROM_S + elapsed * gameSpeed;
+
+  for (const tr of activeTracks) {
+    const pos = interpolate(tr.waypoints, gameT);
+    if (!pos) continue;
+    const { x, y } = gameToCanvas(pos.x, pos.y);
+    tr._lastPos = { x, y };
+    const dx = x - tr.lastStampX, dy = y - tr.lastStampY;
+    if (dx*dx + dy*dy >= STAMP_DIST_PX * STAMP_DIST_PX) {
+      stampHeat(x, y);
+      tr.lastStampX = x; tr.lastStampY = y;
+      heatDirty = true;
+    }
+  }
+
+  if (heatDirty && (now - lastHeatRender) >= HEAT_FPS) {
+    renderHeat(); lastHeatRender = now; heatDirty = false;
+  }
+
+  drawDots(now);
+
+  progressEl.style.width = ((elapsed / PLAYBACK_SECS) * 100) + '%';
+  timerEl.textContent = fmt(gameT);
+  const ph = getPhase(gameT);
+  phaseTagEl.textContent = ph.label; phaseTagEl.style.color = ph.color;
+  phaseLblEl.textContent = ph.label; phaseLblEl.style.color = ph.color;
+  phaseLblEl.style.borderColor = ph.color + '33';
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
